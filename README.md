@@ -2,7 +2,7 @@
 
 An intelligent web application that **scrapes**, **extracts**, and **consolidates** Fixed Deposit interest rates from Indian bank websites using **Azure OpenAI GPT-4o** and **Playwright browser automation**.
 
-Users add bank FD-rate page URLs via a React dashboard, trigger a scrape, and the system automatically navigates tabbed pages, extracts structured rate data through AI, and persists results to Azure Blob Storage.
+Users add bank FD-rate page URLs via a React dashboard, trigger a scrape, and the system automatically navigates tabbed pages, extracts structured rate data through AI, and persists results to Azure Blob Storage. A one-click **Excel export** feature generates a styled `.xlsx` workbook (each bank on its own sheet) and uploads it back to Blob Storage.
 
 ---
 
@@ -15,20 +15,21 @@ Users add bank FD-rate page URLs via a React dashboard, trigger a scrape, and th
 │                  │        │                                             │
 │  • URL Manager   │        │  ┌──────────┐  ┌────────────┐  ┌────────┐ │
 │  • Scrape Button │        │  │ API Layer │→ │  AI Agent   │→ │Scraper │ │
-│  • Results View  │        │  │ routes.py │  │fd_rate_agent│  │_worker │ │
-│                  │        │  └─────┬─────┘  └──────┬─────┘  └───┬────┘ │
+│  • Excel Export  │        │  │ routes.py │  │fd_rate_agent│  │_worker │ │
+│  • Results View  │        │  │     │     │  └──────┬─────┘  └───┬────┘ │
+│                  │        │  └─────┬─────┘         │             │      │
 └──────────────────┘        │        │               │             │      │
-                            │        ▼               ▼             ▼      │
-                            │  ┌──────────┐  ┌────────────┐  ┌────────┐ │
-                            │  │URL Store │  │Azure OpenAI│  │Chromium│ │
-                            │  │urls.json │  │  (GPT-4o)  │  │Browser │ │
-                            │  └──────────┘  └────────────┘  └────────┘ │
-                            │        │                                    │
+                            │   ┌────┴──────┐        ▼             ▼      │
+                            │   │excel_export│ ┌────────────┐  ┌────────┐ │
+                            │   │  .py       │ │Azure OpenAI│  │Chromium│ │
+                            │   └────┬──────┘ │  (GPT-4o)  │  │Browser │ │
+                            │        │        └────────────┘  └────────┘ │
                             │        ▼                                    │
                             │  ┌─────────────────┐                       │
                             │  │  Azure Blob      │                       │
                             │  │  Storage          │                       │
                             │  │  (fd-rates)       │                       │
+                            │  │  .json + .xlsx    │                       │
                             │  └─────────────────┘                       │
                             └─────────────────────────────────────────────┘
 ```
@@ -42,6 +43,7 @@ Users add bank FD-rate page URLs via a React dashboard, trigger a scrape, and th
 5. **Aggregation** — Results from all tabs and all banks are merged into a `ConsolidatedFDData` object
 6. **Storage** — Results are saved to Azure Blob Storage as timestamped JSON + `latest.json`
 7. **Display** — The React frontend renders bank-wise FD rates with category filters and expandable tables
+8. **Excel Export** — User clicks "Write Excel"; the backend reads `latest.json` from Blob, generates a styled `.xlsx` (one sheet per bank via **openpyxl**), and uploads both `fd_rates_<timestamp>.xlsx` and `latest.xlsx` back to Blob Storage
 
 ---
 
@@ -55,6 +57,7 @@ Users add bank FD-rate page URLs via a React dashboard, trigger a scrape, and th
 | **AI Model**     | Azure OpenAI — GPT-4o              | 2024-11-20 |
 | **Scraping**     | Playwright (Chromium headless)      | 1.40+      |
 | **Storage**      | Azure Blob Storage                  | SDK 12.20+ |
+| **Excel**        | openpyxl                            | 3.1+       |
 | **Auth**         | Azure Identity (DefaultAzureCredential) | 1.17+  |
 | **IaC**          | Bicep                               | —          |
 | **Deployment**   | Azure CLI + PowerShell              | —          |
@@ -90,7 +93,8 @@ fd-rate-scraper/
 │   │   ├── scraper_tool.py         # Async subprocess wrapper for _scrape_worker
 │   │   └── _scrape_worker.py       # Playwright browser scraper (runs as subprocess)
 │   ├── api/                        # REST API layer
-│   │   ├── routes.py               # FastAPI endpoints (/urls, /scrape, /results)
+│   │   ├── routes.py               # FastAPI endpoints (/urls, /scrape, /results, /export-excel)
+│   │   ├── excel_export.py         # Excel workbook generator (openpyxl) + blob uploader
 │   │   └── url_store.py            # JSON file-based URL persistence
 │   └── storage/                    # Azure storage integration
 │       └── blob_client.py          # Blob Storage client (Entra ID auth)
@@ -146,8 +150,15 @@ Standalone Playwright scraper executed as `python -m backend.agent._scrape_worke
 - Outputs formatted text with `=== TAB N: "label" ===` markers
 - Handles dynamic content loading with smart waits
 
+#### `backend/api/excel_export.py`
+Excel export module. Key functions:
+- **`generate_excel_bytes(data)`** — Creates an in-memory `.xlsx` workbook with a styled sheet per bank. Each sheet has a burgundy-themed header row (`#97144D`), merged title row, column auto-widths, freeze panes, and auto-filter.
+- **`export_excel_to_blob()`** — Reads `latest.json` from Blob Storage, calls `generate_excel_bytes()`, and uploads the result as both `fd_rates_YYYYMMDD_HHMMSS.xlsx` (timestamped) and `latest.xlsx`.
+
+Columns: Category, Tenor (Description), Min Days, Max Days, Rate %, Amount Slab, Scheme, Effective Date, Additional Info.
+
 #### `backend/api/routes.py`
-FastAPI router with five endpoints:
+FastAPI router with six endpoints:
 
 | Method   | Path              | Description                          |
 |----------|-------------------|--------------------------------------|
@@ -156,6 +167,7 @@ FastAPI router with five endpoints:
 | `DELETE`  | `/api/urls/{id}`  | Remove a URL by ID                   |
 | `POST`   | `/api/scrape`     | Trigger scraping + AI extraction     |
 | `GET`    | `/api/results/latest` | Get latest results from Blob Storage |
+| `POST`   | `/api/export-excel` | Generate Excel from latest JSON & upload to Blob |
 
 #### `backend/api/url_store.py`
 JSON file-based URL store (`data/urls.json`). Provides `get_all_urls()`, `add_url()`, and `delete_url()` with UUID generation and timestamps. No database required.
@@ -169,11 +181,12 @@ Azure Blob Storage client using **Entra ID authentication** (`DefaultAzureCreden
 Main React component with an **Axis Bank-inspired burgundy theme** (`#97144D`). Features:
 - URL management panel (add, list, delete)
 - One-click scrape trigger with loading state
+- **"Write Excel" button** — exports latest results to a styled `.xlsx` workbook in Blob Storage
 - Results dashboard with stats cards (total banks, total rates)
 - Bank-wise expandable rate tables with category badges (Senior Citizen, General, etc.)
 
 #### `frontend/src/api.js`
-API client abstraction. Functions: `getUrls()`, `addUrl()`, `deleteUrl()`, `triggerScrape()`, `getLatestResults()`. Uses the proxy defined in `package.json` for dev.
+API client abstraction. Functions: `getUrls()`, `addUrl()`, `deleteUrl()`, `triggerScrape()`, `getLatestResults()`, `exportExcel()`. Uses the proxy defined in `package.json` for dev.
 
 #### `infra/main.bicep`
 Bicep IaC template that provisions:
@@ -279,6 +292,7 @@ The React app will open at `http://localhost:3001` (or `3000` depending on avail
 1. **Add a bank URL** — Enter a bank's FD interest rate page URL (e.g., `https://www.hdfc.bank.in/interest-rates`) and a bank name
 2. **Click "Scrape All Banks"** — The system will navigate the page, detect tabs, and extract rates via AI
 3. **View results** — Consolidated FD rates appear in the dashboard, grouped by bank with category filters
+4. **Export to Excel** — Click "📊 Write Excel" to generate a styled `.xlsx` file (one sheet per bank) and upload it to Blob Storage
 
 ---
 
@@ -306,6 +320,7 @@ Copy `.env.template` to `.env` and fill in the values (or use `setup.ps1` to aut
 | `DELETE`  | `/api/urls/{id}`      | —                                      | `{status: "deleted"}`                |
 | `POST`   | `/api/scrape`         | —                                      | `{status, message, blob_url, data}`  |
 | `GET`    | `/api/results/latest` | —                                      | `{generated_at, total_banks, banks}` |
+| `POST`   | `/api/export-excel`   | —                                      | `{status, message, excel_url, file_name}` |
 | `GET`    | `/health`             | —                                      | `{status: "ok"}`                     |
 
 ---

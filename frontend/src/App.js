@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { getUrls, addUrl, deleteUrl, triggerScrape, getLatestResults } from "./api";
+import { getUrls, addUrl, deleteUrl, triggerScrape, getLatestResults, exportExcel } from "./api";
 
 /* ── Axis Bank Brand Palette ───────────────────────────────────── */
 const AX = {
@@ -222,6 +222,7 @@ function App() {
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [scraping, setScraping] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [message, setMessage] = useState(null); // { type, text }
   const [activeTab, setActiveTab] = useState("urls"); // "urls" | "results"
 
@@ -294,6 +295,22 @@ function App() {
       }
     } catch {
       setMessage({ type: "error", text: "Failed to load results." });
+    }
+  };
+
+  const handleExportExcel = async () => {
+    setExporting(true);
+    setMessage({ type: "info", text: "Generating Excel file..." });
+    try {
+      const data = await exportExcel();
+      setMessage({
+        type: "success",
+        text: `Excel generated! File: ${data.file_name}. Blob URL: ${data.excel_url}`,
+      });
+    } catch (err) {
+      setMessage({ type: "error", text: err.message });
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -419,6 +436,20 @@ function App() {
                       </>
                     ) : (
                       "Scrape All FD Rates"
+                    )}
+                  </button>
+                  <button
+                    style={{ ...STYLES.btnGold, opacity: exporting ? 0.6 : 1 }}
+                    onClick={handleExportExcel}
+                    disabled={exporting}
+                  >
+                    {exporting ? (
+                      <>
+                        <span style={STYLES.spinner} />
+                        Exporting...
+                      </>
+                    ) : (
+                      "📊 Write Excel"
                     )}
                   </button>
                 </div>

@@ -39,3 +39,12 @@ export async function getLatestResults() {
   }
   return res.json();
 }
+
+export async function exportExcel() {
+  const res = await fetch(`${API_BASE}/export-excel`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Excel export failed");
+  }
+  return res.json();
+}

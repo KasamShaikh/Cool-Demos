@@ -80,3 +80,25 @@ def get_latest_results():
             status_code=404, detail="No results found. Run a scrape first."
         )
     return data
+
+
+# ── Excel Export ─────────────────────────────────────────────────
+
+
+@router.post("/export-excel")
+def export_excel():
+    """Generate an Excel file from latest results and upload to Blob Storage."""
+    from backend.api.excel_export import export_excel_to_blob
+
+    try:
+        result = export_excel_to_blob()
+        return {
+            "status": "success",
+            "message": "Excel file generated and uploaded to Blob Storage.",
+            "excel_url": result["excel_url"],
+            "file_name": result["file_name"],
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Excel export failed: {e}")
